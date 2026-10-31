@@ -1,0 +1,34 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pymc as pm
+
+if __name__ == "__main__":
+    R, N, r, a, Y = 2.0, 40, 0.1, 0.5, 10000
+    p_hit = (N * r**2) / (4 * R**2)
+    
+    true_energy = 1.0
+    
+    with pm.Model() as model:
+        E = pm.Data('E', true_energy) 
+        
+        # Среднее число фотоэлектронов
+        mu_pe = E * Y * p_hit * a
+        
+        # --- Затухание ---
+        # L = 8.0
+        # mu_pe = mu_pe * np.exp(-R / L)
+        
+        Q_obs = pm.Poisson('Q_obs', mu=mu_pe)
+        
+        # Генерируем отклик 
+        prior_pred = pm.sample_prior_predictive(samples=5000)
+    
+    data_pymc = prior_pred.prior['Q_obs'].values.flatten()
+
+    plt.figure(figsize=(8, 5))
+    plt.hist(data_pymc, bins=30, color='green', alpha=0.7, edgecolor='black')
+    plt.title('Отклик детектора для 1 МэВ (Модель PyMC)')
+    plt.xlabel('Заряд (фотоэлектроны)')
+    plt.ylabel('Частота')
+    plt.grid(True, alpha=0.3)
+    plt.show()
