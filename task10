@@ -1,0 +1,90 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pymc as pm
+import pytensor.tensor as pt
+
+if __name__ == "__main__":
+    
+    R, N, r, a, Y = 2.0, 40, 0.1, 0.5, 10000
+    
+    np.random.seed(42) 
+    z_pmt = np.random.uniform(-R, R, N)
+    phi_pmt = np.random.uniform(0, 2 * np.pi, N)
+    r_xy = np.sqrt(R**2 - z_pmt**2)
+    pmt_coords = np.column_stack((r_xy*np.cos(phi_pmt), r_xy*np.sin(phi_pmt), z_pmt))
+    
+    true_E = 10 
+    true_pos = np.array([0.5, -0.3, 0.4]) 
+    
+    # Генерация "наблюдаемых" данных 
+    dists = np.linalg.norm(pmt_coords - true_pos, axis=1)
+    
+    dot_products = np.sum(pmt_coords * (pmt_coords - true_pos), axis=1)
+    cos_theta = dot_products / (R * dists)
+    
+    # Ожидаемое число фотоэлектронов на каждом ФЭУ
+    mu_true_i = true_E * Y * a * (r**2 / (4 * R)) * (cos_theta / dists**2)
+    mu_true_i = np.maximum(mu_true_i, 1e-5)  
+
+    # Реальные наблюдения 
+    observed_data = np.random.poisson(mu_true_i)
+    
+    print(f"Суммарный заряд: {np.sum(observed_data)} фотоэлектронов")
+    
+    # БАЙЕСОВСКАЯ РЕКОНСТРУКЦИЯ 
+    
+    with pm.Model() as model:
+        # Априорные распределения 
+        E = pm.Uniform('E', lower=0, upper=15)
+        x = pm.Uniform('x', lower=-1.8, upper=1.8)
+        y = pm.Uniform('y', lower=-1.8, upper=1.8)
+        z = pm.Uniform('z', lower=-1.8, upper=1.8)
+        
+        pos = pt.stack([x, y, z])
+        
+        # Физика
+        dists_model = pt.sqrt(pt.sum((pmt_coords - pos)**2, axis=1))
+        dot_prod = pt.sum(pmt_coords * (pmt_coords - pos), axis=1)
+        cos_theta_model = dot_prod / (R * dists_model)
+        
+        # Ожидаемое значение для каждого ФЭУ
+        mu_model = E * Y * a * (r**2 / (4 * R)) * (cos_theta_model / dists_model**2)
+        mu_model = pt.maximum(mu_model, 1e-5)  
+        
+        # Функция правдоподобия 
+        Q_obs = pm.Poisson('Q_obs', mu=mu_model, observed=observed_data)
+
+        trace = pm.sample(draws=1000, tune=1000, chains=2, progressbar=False)
+    
+    E_post = trace.posterior['E'].values.flatten()
+    x_post = trace.posterior['x'].values.flatten()
+    y_post = trace.posterior['y'].values.flatten()
+    z_post = trace.posterior['z'].values.flatten()
+    
+    print("\n--- РЕЗУЛЬТАТЫ ВОССТАНОВЛЕНИЯ ---")
+    print(f"Энергия: {np.mean(E_post):.3f} ± {np.std(E_post):.3f} (Истинная: {true_E})")
+    print(f"X: {np.mean(x_post):.3f} (Истинный: {true_pos[0]})")
+    print(f"Y: {np.mean(y_post):.3f} (Истинный: {true_pos[1]})")
+    print(f"Z: {np.mean(z_post):.3f} (Истинный: {true_pos[2]})")
+    
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    plt.suptitle('Байесовская реконструкция события', fontsize=14)
+    
+    axes[0, 0].hist(E_post, bins=30, color='orange', alpha=0.7)
+    axes[0, 0].axvline(true_E, color='red', linestyle='--', label='Истина')
+    axes[0, 0].set_title('Энергия (МэВ)'); axes[0, 0].legend()
+    
+    axes[0, 1].hist(x_post, bins=30, color='green', alpha=0.7)
+    axes[0, 1].axvline(true_pos[0], color='red', linestyle='--')
+    axes[0, 1].set_title('Координата X (м)')
+    
+    axes[1, 0].hist(y_post, bins=30, color='blue', alpha=0.7)
+    axes[1, 0].axvline(true_pos[1], color='red', linestyle='--')
+    axes[1, 0].set_title('Координата Y (м)')
+    
+    axes[1, 1].hist(z_post, bins=30, color='purple', alpha=0.7)
+    axes[1, 1].axvline(true_pos[2], color='red', linestyle='--')
+    axes[1, 1].set_title('Координата Z (м)')
+    
+    plt.tight_layout()
+    plt.show()
